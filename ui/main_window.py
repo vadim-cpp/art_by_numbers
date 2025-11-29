@@ -16,6 +16,8 @@ from ui.tabs.correction_tab import CorrectionTab
 from ui.tabs.quantization_tab import QuantizationTab
 from ui.tabs.contours_tab import ContoursTab
 from ui.tabs.export_tab import ExportTab
+from ui.tabs.semantic_segmentation_tab import SemanticSegmentationTab
+from ui.tabs.developer_console_tab import DeveloperConsoleTab
 
 
 class PaintByNumbersApp(QMainWindow):
@@ -56,10 +58,14 @@ class PaintByNumbersApp(QMainWindow):
         self.quantization_tab = QuantizationTab(self)
         self.contours_tab = ContoursTab(self)
         self.export_tab = ExportTab(self)
+        self.semantic_tab = SemanticSegmentationTab(self)
+        self.developer_tab = DeveloperConsoleTab(self)
 
         self.tabs.addTab(self.correction_tab, "Коррекция")
         self.tabs.addTab(self.quantization_tab, "Квантование")
         self.tabs.addTab(self.contours_tab, "Контуры")
+        self.tabs.addTab(self.semantic_tab, "Умная сегментация")
+        self.tabs.addTab(self.developer_tab, "Консоль разработчика")
         self.tabs.addTab(self.export_tab, "Сохранение")
 
         left_layout.addWidget(self.tabs)
@@ -93,6 +99,9 @@ class PaintByNumbersApp(QMainWindow):
         splitter.setSizes([400, 1000])
 
         main_layout.addWidget(splitter)
+
+        # Настраиваем callback для метрик
+        self.processor.set_metrics_callback(self.developer_tab.log_message)
 
     def browse_image(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -142,6 +151,10 @@ class PaintByNumbersApp(QMainWindow):
             self.drop_label.setText(f"Загружено: {os.path.basename(file_path)}\n"
                                     f"Размер: {rgb.shape[1]}x{rgb.shape[0]}")
 
+            # Логируем информацию о загрузке
+            self.developer_tab.log_message(f"Изображение загружено: {os.path.basename(file_path)}", "info")
+            self.developer_tab.log_message(f"Размер: {rgb.shape[1]}x{rgb.shape[0]}, Каналы: {rgb.shape[2]}", "info")
+
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при загрузке: {str(e)}")
             print(f"Полная ошибка: {traceback.format_exc()}")
@@ -154,6 +167,11 @@ class PaintByNumbersApp(QMainWindow):
         brightness = self.correction_tab.brightness_slider.value()
         contrast = self.correction_tab.contrast_slider.value() / 100.0
         saturation = self.correction_tab.saturation_slider.value() / 100.0
+
+        # Логируем параметры коррекции
+        self.developer_tab.log_message(
+            f"Применение коррекции: яркость={brightness}, контраст={contrast:.2f}, насыщенность={saturation:.2f}",
+            "info")
 
         # Запускаем в отдельном потоке
         self.start_processing("adjust",
@@ -177,6 +195,10 @@ class PaintByNumbersApp(QMainWindow):
         blur_k = self.quantization_tab.blur_spin.value()
         min_area = self.quantization_tab.area_spin.value()
 
+        # Логируем параметры квантования
+        self.developer_tab.log_message(f"Применение квантования: метод={method}, цвета={n_colors}, размытие={blur_k}",
+                                       "info")
+
         self.start_processing("quantize",
                               n_colors=n_colors,
                               blur_k=blur_k,
@@ -188,6 +210,7 @@ class PaintByNumbersApp(QMainWindow):
             if quantized is not None and labels is not None:
                 merged, new_labels = self.processor.merge_small_regions(min_area_px=min_area)
                 self.update_preview(merged)
+                self.developer_tab.log_message(f"Объединение мелких регионов: мин. площадь={min_area} пикс.", "info")
 
         QTimer.singleShot(100, apply_merge)
 
@@ -212,6 +235,65 @@ class PaintByNumbersApp(QMainWindow):
 
         self.update_preview(result)
 
+        # Логируем параметры контуров
+        self.developer_tab.log_message(
+            f"Применение контуров: метод={method}, толщина={self.contours_tab.thickness_spin.value()}, номера={self.contours_tab.show_numbers_check.isChecked()}",
+            "info")
+
+    def preview_semantic_segmentation(self):
+        """Предпросмотр семантической сегментации"""
+        if self.current_image is None:
+            QMessageBox.warning(self, "Предупреждение", "Сначала загрузите изображение")
+            return
+
+        try:
+            parameters = self.semantic_tab.get_parameters()
+
+            # Логируем параметры семантической сегментации
+            self.developer_tab.log_message(f"Предпросмотр семантической сегментации: {parameters}", "info")
+
+            # Применяем семантическую сегментацию
+            semantic_mask = self.processor.semantic_segment(
+                self.current_image,
+                max_classes=parameters['max_classes']
+            )
+
+            # Визуализируем результат
+            visualized = self.processor.visualize_semantic_mask(self.current_image)
+            self.update_preview(visualized)
+
+            QMessageBox.information(self, "Успех",
+                                    f"Семантическая сегментация применена. Обнаружено классов: {len(self.processor.semantic_classes)}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка семантической сегментации: {str(e)}")
+
+    def apply_semantic_segmentation(self):
+        """Применяет полную семантическую обработку"""
+        if self.current_image is None:
+            QMessageBox.warning(self, "Предупреждение", "Сначала загрузите изображение")
+            return
+
+        self.semantic_tab.segmentation_progress.setVisible(True)
+        self.semantic_tab.segmentation_progress.setRange(0, 0)  # Индетерминантный прогресс
+
+        parameters = self.semantic_tab.get_parameters()
+        self.developer_tab.log_message(f"Запуск полной семантической обработки: {parameters}", "info")
+
+        # Запускаем в отдельном потоке
+        self.start_processing("semantic_full",
+                              n_colors=12,  # Базовое значение, будет адаптироваться
+                              adaptive_params=parameters['adaptive_params'],
+                              face_quality=parameters['face_quality'])
+
+    def reset_to_normal_processing(self):
+        """Возвращает к обычной обработке"""
+        self.processor.reset_semantic_segmentation()
+        if self.current_image is not None:
+            self.update_preview(self.current_image)
+        self.developer_tab.log_message("Возврат к обычной обработке", "info")
+        QMessageBox.information(self, "Информация", "Возврат к обычной обработке")
+
     def start_processing(self, operation, **kwargs):
         self.progress_bar.setVisible(True)
         self.progress_bar.setRange(0, 0)  # indeterminate progress
@@ -222,9 +304,12 @@ class PaintByNumbersApp(QMainWindow):
 
     def on_processing_finished(self, result):
         self.progress_bar.setVisible(False)
+        self.semantic_tab.segmentation_progress.setVisible(False)  # Скрываем прогресс семантической сегментации
 
         if isinstance(result, Exception):
-            QMessageBox.critical(self, "Ошибка", f"Ошибка обработки: {str(result)}")
+            error_msg = f"Ошибка обработки: {str(result)}"
+            self.developer_tab.log_message(error_msg, "error")
+            QMessageBox.critical(self, "Ошибка", error_msg)
             return
 
         # Обрабатываем разные типы результатов
@@ -236,6 +321,14 @@ class PaintByNumbersApp(QMainWindow):
                 image_to_show = result
 
             self.update_preview(image_to_show)
+
+            # Особое сообщение для семантической обработки
+            if hasattr(self.processor, 'using_semantic_segmentation') and self.processor.using_semantic_segmentation:
+                success_msg = f"Семантическая обработка завершена! Обнаружено семантических классов: {len(self.processor.semantic_classes)}"
+                self.developer_tab.log_message(success_msg, "success")
+                QMessageBox.information(self, "Успех", success_msg)
+            else:
+                self.developer_tab.log_message("Обработка завершена успешно", "success")
 
     def update_preview(self, image):
         if image is None:
@@ -306,8 +399,10 @@ class PaintByNumbersApp(QMainWindow):
         try:
             if image_type == "original":
                 img_to_save = self.processor.orig
+                self.developer_tab.log_message(f"Сохранение исходного изображения: {file_path}", "info")
             elif image_type == "quantized":
                 img_to_save = self.processor.quantized
+                self.developer_tab.log_message(f"Сохранение квантованного изображения: {file_path}", "info")
             elif image_type == "final":
                 # Текущее изображение в preview
                 if self.preview_label.pixmap():
@@ -315,10 +410,12 @@ class PaintByNumbersApp(QMainWindow):
                     img_to_save = self.processor.quantized
                 else:
                     img_to_save = self.processor.orig
+                self.developer_tab.log_message(f"Сохранение финального результата: {file_path}", "info")
             elif image_type == "scheme":
                 borders = self.processor.get_borders(method="cluster_borders")
                 img_to_save = self.processor.render_with_borders_and_numbers(
                     borders, show_numbers=True)
+                self.developer_tab.log_message(f"Сохранение схемы с контурами: {file_path}", "info")
             else:
                 img_to_save = self.processor.orig
 
@@ -326,9 +423,15 @@ class PaintByNumbersApp(QMainWindow):
                 # Конвертируем RGB в BGR для OpenCV
                 bgr = cv2.cvtColor(img_to_save, cv2.COLOR_RGB2BGR)
                 cv2.imwrite(file_path, bgr)
-                QMessageBox.information(self, "Успех", f"Изображение сохранено: {file_path}")
+                success_msg = f"Изображение сохранено: {file_path}"
+                self.developer_tab.log_message(success_msg, "success")
+                QMessageBox.information(self, "Успех", success_msg)
             else:
-                QMessageBox.warning(self, "Предупреждение", "Нет данных для сохранения")
+                warning_msg = "Нет данных для сохранения"
+                self.developer_tab.log_message(warning_msg, "warning")
+                QMessageBox.warning(self, "Предупреждение", warning_msg)
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при сохранении: {str(e)}")
+            error_msg = f"Ошибка при сохранении: {str(e)}"
+            self.developer_tab.log_message(error_msg, "error")
+            QMessageBox.critical(self, "Ошибка", error_msg)
