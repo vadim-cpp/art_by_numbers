@@ -18,6 +18,7 @@ from ui.tabs.contours_tab import ContoursTab
 from ui.tabs.export_tab import ExportTab
 from ui.tabs.semantic_segmentation_tab import SemanticSegmentationTab
 from ui.tabs.developer_console_tab import DeveloperConsoleTab
+from camera_capture import CameraCaptureDialog
 
 
 class PaintByNumbersApp(QMainWindow):
@@ -45,9 +46,10 @@ class PaintByNumbersApp(QMainWindow):
         left_panel = QWidget()
         left_layout = QVBoxLayout(left_panel)
 
-        # Виджет drag-and-drop
+        # Виджет drag-and-drop с кнопкой камеры
         self.drop_label = DragDropLabel(self)
         self.drop_label.clicked.connect(self.browse_image)
+        self.drop_label.camera_clicked.connect(self.capture_image)
         left_layout.addWidget(self.drop_label)
 
         # Вкладки настроек
@@ -109,6 +111,39 @@ class PaintByNumbersApp(QMainWindow):
             "Images (*.png *.jpg *.jpeg *.bmp *.tiff)")
         if file_path:
             self.load_image(file_path)
+
+    def capture_image(self):
+        """Захват изображения с веб-камеры"""
+        try:
+            camera_dialog = CameraCaptureDialog(self)
+            camera_dialog.image_captured.connect(self.on_image_captured)
+            camera_dialog.exec_()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка камеры",
+                                 f"Не удалось запустить веб-камеру:\n{str(e)}")
+
+    def on_image_captured(self, image_array):
+        """Обработка захваченного с камеры изображения"""
+        try:
+            self.processor.load_image(image_array)
+            self.current_image = image_array
+
+            # Показываем превью
+            self.update_preview(image_array)
+
+            # Обновляем текст drag-drop области
+            self.drop_label.setText(f"Загружено: фото с камеры\n"
+                                    f"Размер: {image_array.shape[1]}x{image_array.shape[0]}")
+
+            # Логируем информацию о загрузке
+            self.developer_tab.log_message(f"Изображение захвачено с камеры", "info")
+            self.developer_tab.log_message(
+                f"Размер: {image_array.shape[1]}x{image_array.shape[0]}, Каналы: {image_array.shape[2]}", "info")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при загрузке изображения с камеры: {str(e)}")
+            print(f"Полная ошибка: {traceback.format_exc()}")
 
     def load_image(self, file_path):
         try:
