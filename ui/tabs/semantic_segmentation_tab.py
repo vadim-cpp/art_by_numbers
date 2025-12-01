@@ -71,17 +71,17 @@ class SemanticSegmentationTab(QWidget):
         preview_btn = QPushButton("Предпросмотр сегментации")
         preview_btn.clicked.connect(self.preview_segmentation)
 
-        # Применить семантическую сегментацию
-        apply_btn = QPushButton("Применить семантическую сегментацию")
-        apply_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
-        apply_btn.clicked.connect(self.apply_semantic_segmentation)
+        # # Применить семантическую сегментацию
+        # apply_btn = QPushButton("Применить семантическую сегментацию")
+        # apply_btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; font-weight: bold; }")
+        # apply_btn.clicked.connect(self.apply_semantic_segmentation)
 
         # Сбросить к обычной обработке
         reset_btn = QPushButton("Вернуться к обычной обработке")
         reset_btn.clicked.connect(self.reset_to_normal)
 
         buttons_layout.addWidget(preview_btn)
-        buttons_layout.addWidget(apply_btn)
+        # buttons_layout.addWidget(apply_btn)
         buttons_layout.addWidget(reset_btn)
 
         # Добавляем все в основной layout
